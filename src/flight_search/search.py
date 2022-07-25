@@ -1,89 +1,95 @@
-import datetime as dt
-from dataclasses import dataclass
 from itertools import product
 from typing import Generator, Iterable
 
-from .flights import FlightCombination, FlightDetails
+from flight_search.constraints import (
+    SearchConstraints,
+    TripConstraints,
+    is_combination_elegible,
+    is_flight_elegible,
+    is_trip_elegible,
+    is_valid_layover,
+)
+from flight_search.entities import (
+    FlightCombination,
+    FlightDetails,
+    Trip,
+    NullFlightCombination,
+)
+
+FlightIndex = dict[str, list[FlightDetails]]
 
 
-@dataclass
-class SearchConstraints:
-    required_bags: int = 0
-    min_layover: int = 1
-    max_layover: int = 6
-
-    def is_valid_flight(self, flight: FlightDetails) -> bool:
-        return flight.bags_allowed >= self.required_bags
-
-    def is_valid_layover(self, inbound: FlightDetails, outbound: FlightDetails) -> bool:
-        return (
-            dt.timedelta(hours=self.min_layover)
-            <= outbound.departure - inbound.arrival
-            <= dt.timedelta(hours=self.max_layover)
-        )
-
-    def is_valid_combination(self, combination: FlightCombination) -> bool:
-        return True
+def build_flight_index(flights: Iterable[FlightDetails]) -> FlightIndex:
+    index = {}
+    for flight in flights:
+        index.setdefault(flight.origin, []).append(flight)
+    return index
 
 
-class FlightCatalog:
-    """Stores & indexes flights by origin to ease retrieval"""
-
-    def __init__(self, flights: Iterable[FlightDetails] | None = None) -> None:
-        self._catalog: dict = {}
-        for flight in flights or []:
-            self.add_flight(flight)
-
-    def add_flight(self, flight: FlightDetails) -> None:
-        self._catalog.setdefault(flight.origin, []).append(flight)
-
-    def get_outbound_flights(self, origin: str) -> list[FlightDetails]:
-        return self._catalog.get(origin, [])
+def branch_combination(
+    cmb: FlightCombination,
+    index: FlightIndex,
+    constraints: SearchConstraints,
+) -> list[FlightCombination]:
+    return [
+        cmb + flight
+        for flight in index.get(cmb.destination, [])
+        if flight.destination not in cmb.visited_airports
+        and is_valid_layover(cmb.last, flight, constraints)
+    ]
 
 
-def find_combinations_for_route(
-    catalog: FlightCatalog,
-    origin: str,
-    dest: str,
+def find_combinations(
+    index: FlightIndex,
     constraints: SearchConstraints,
 ) -> Generator[FlightCombination, None, None]:
 
     stack: list[FlightCombination] = [
-        FlightCombination([flight]) for flight in catalog.get_outbound_flights(origin)
+        FlightCombination(flight) for flight in index.get(constraints.origin, [])
     ]
 
     while stack:
-        combination: FlightCombination = stack.pop()
-        if combination.destination == dest:
-            yield combination
+        if (cur := stack.pop()).destination == constraints.destination:
+            yield cur
         else:
-            next_combinations: Generator[FlightCombination, None, None] = (
-                combination.add_leg(flight)
-                for flight in catalog.get_outbound_flights(combination.destination)
-                if flight.destination not in combination.visited_airports
-                and constraints.is_valid_layover(combination.last, flight)
+            stack.extend(
+                cmb
+                for cmb in branch_combination(cur, index, constraints)
+                if is_combination_elegible(cmb, constraints)
             )
-            stack.extend(filter(constraints.is_valid_combination, next_combinations))
 
 
-def find_combinations(
-    flights: Iterable[FlightDetails],
-    origin: str,
-    dest: str,
-    constraints: SearchConstraints,
-    is_roundtrip: bool = False,
-) -> Generator[FlightCombination, None, None]:
-    catalog: FlightCatalog = FlightCatalog(filter(constraints.is_valid_flight, flights))
-    departing: Iterable[FlightCombination] = find_combinations_for_route(
-        catalog, origin, dest, constraints
-    )
-    if is_roundtrip:
-        returning: Iterable[FlightCombination] = find_combinations_for_route(
-            catalog, dest, origin, constraints
-        )
-        return (
-            dep.join(ret)
-            for dep, ret in product(departing, returning)
+def _find_trips(
+    index: FlightIndex, constraints: TripConstraints
+) -> Generator[Trip, None, None]:
+
+    if constraints.returning:
+        trip_legs = (
+            (dep, ret)
+            for dep, ret in product(
+                find_combinations(index, constraints.departing),
+                find_combinations(index, constraints.returning),
+            )
             if ret.first.departure > dep.last.arrival
         )
-    return departing
+    else:
+        trip_legs = (
+            (dep, NullFlightCombination())
+            for dep in find_combinations(index, constraints.departing)
+        )
+    return (
+        trip
+        for trip in (Trip(dep, ret, constraints.required_bags) for dep, ret in trip_legs)
+        if is_trip_elegible(trip, constraints)
+    )
+
+
+def search_trips(
+    flights: Iterable[FlightDetails],
+    constraints: TripConstraints,
+) -> Generator[FlightCombination, None, None]:
+
+    index: FlightIndex = build_flight_index(
+        filter(lambda f: is_flight_elegible(f, constraints), flights)
+    )
+    return _find_trips(index, constraints)

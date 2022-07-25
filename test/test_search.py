@@ -1,17 +1,22 @@
 import datetime as dt
+from distutils.command.build import build
 
-from flight_search.flights import FlightDetails
+from flight_search.entities import FlightCombination, FlightDetails
+from flight_search.main import record_to_flight
 from flight_search.search import (
-    FlightCatalog,
+    FlightIndex,
+    build_flight_index,
     SearchConstraints,
-    find_combinations_for_route,
+    branch_combination,
+    find_combinations,
 )
+from flight_search.constraints import SearchConstraints
 
 
-def gen_flight(
+def make_flight(
     origin: str, dest: str, departure: str, arrival: str, flight_no: str = "FAKE"
 ):
-    return FlightDetails.from_record(
+    return record_to_flight(
         {
             "flight_no": flight_no,
             "origin": origin,
@@ -25,96 +30,98 @@ def gen_flight(
     )
 
 
-# def test_index_correctly_groups_flight_by_origin():
-#     extra_args = [dt.datetime(2022, 1, 1), dt.datetime(2022, 1, 2), 0, 0, 0]
-#     flights = [
-#         FlightDetails("0000", "AAA", "BBB", *extra_args),
-#         FlightDetails("0001", "AAA", "BBB", *extra_args),
-#         FlightDetails("0002", "BBB", "DDD", *extra_args),
-#         FlightDetails("0003", "CCC", "BBB", *extra_args),
-#     ]
-#     index = build_flight_index(flights)
-#     for key, vals in index.items():
-#         for val in vals:
-#             assert key == val.origin
-#     assert len(index["AAA"]) == 2
-#     assert len(index["BBB"]) == 1
-#     assert len(index["CCC"]) == 1
+default_constraints = SearchConstraints(
+    "AAA", "BBB", 0, dt.timedelta(hours=1), dt.timedelta(hours=6)
+)
+
+
+def test_flight_index_groups_flights_correctly() -> None:
+    flights = [
+        make_flight("AAA", "CCC", "2022-01-01T13:00:00", "2022-01-01T16:00:00"),
+        make_flight("AAA", "DDD", "2022-01-01T14:00:00", "2022-01-01T17:00:00"),
+        make_flight("BBB", "DDD", "2022-01-01T14:00:00", "2022-01-01T17:00:00"),
+    ]
+    index = build_flight_index(flights)
+    assert len(index) == 2
+    assert len(index["AAA"]) == 2
+    assert len(index["BBB"]) == 1
+
+
+class TestCombinationBranching:
+    def test_branching_from_a_combination_finds_connecting_flights(self) -> None:
+        combination = FlightCombination(
+            make_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T11:00:00")
+        )
+        flights = [
+            make_flight("BBB", "CCC", "2022-01-01T13:00:00", "2022-01-01T16:00:00"),
+            make_flight("BBB", "DDD", "2022-01-01T14:00:00", "2022-01-01T17:00:00"),
+        ]
+        combinations = branch_combination(
+            combination, build_flight_index(flights), default_constraints
+        )
+        assert len(combinations) == 2
+        second_legs = {comb.last for comb in combinations}
+        for flight in flights:
+            assert flight in second_legs
+
+    def test_flight_ignored_when_branching_if_not_a_connection(self) -> None:
+        combination = FlightCombination(
+            make_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T11:00:00")
+        )
+        flights = [
+            make_flight("CCC", "DDD", "2022-01-01T13:00:00", "2022-01-01T16:00:00"),
+        ]
+        combinations = branch_combination(
+            combination, build_flight_index(flights), default_constraints
+        )
+        assert len(combinations) == 0
+
+    def test_flight_ignored__when_branching_if_layover_is_invalid(self) -> None:
+        combination = FlightCombination(
+            make_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T11:00:00")
+        )
+        flights = [
+            make_flight("BBB", "CCC", "2022-01-01T11:30:00", "2022-01-01T23:00:00"),
+            make_flight("BBB", "DDD", "2022-01-01T23:00:00", "2022-01-01T23:00:00"),
+        ]
+        combinations = branch_combination(
+            combination, build_flight_index(flights), default_constraints
+        )
+        assert len(combinations) == 0
+
+    def test_flight_ignored_when_branching_if_destination_already_visited(self) -> None:
+        combination = FlightCombination(
+            make_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T11:00:00")
+        )
+        flights = [
+            make_flight("BBB", "AAA", "2022-01-01T13:00:00", "2022-01-01T16:00:00"),
+        ]
+        combinations = branch_combination(
+            combination, build_flight_index(flights), default_constraints
+        )
+        assert len(combinations) == 0
 
 
 class TestFindCombinations:
-    def find_combinations(self, flights, origin, dest, constraints=None):
-        combinations = find_combinations_for_route(
-            FlightCatalog(flights), origin, dest, constraints or SearchConstraints()
-        )
-        return list(combinations)
-
-    def test_search_can_find_route_with_single_flight(self) -> None:
+    def test_can_find_single_flight_combination(self) -> None:
         flights = [
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
+            make_flight("AAA", "BBB", "2022-01-01T13:00:00", "2022-01-01T16:00:00"),
+            make_flight("AAA", "CCC", "2022-01-01T13:00:00", "2022-01-01T16:00:00"),
         ]
-        assert list(self.find_combinations(flights, "AAA", "BBB")[0]) == flights
+        combinations = list(
+            find_combinations(build_flight_index(flights), default_constraints)
+        )
+        assert len(combinations) == 1
+        assert combinations[0].first == flights[0]
 
-    def test_search_can_find_route_with_single_stop(self):
+    def test_can_find_multiple_flight_combination(self) -> None:
         flights = [
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
-            gen_flight("BBB", "CCC", "2022-01-01T13:00:00", "2022-01-01T14:00:00"),
+            make_flight("AAA", "CCC", "2022-01-01T13:00:00", "2022-01-01T11:00:00"),
+            make_flight("CCC", "BBB", "2022-01-01T13:00:00", "2022-01-01T16:00:00"),
         ]
-        assert list(self.find_combinations(flights, "AAA", "CCC")[0]) == flights
-
-    def test_search_can_find_route_with_multiple_stops(self):
-        flights = [
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
-            gen_flight("BBB", "CCC", "2022-01-01T13:00:00", "2022-01-01T14:00:00"),
-            gen_flight("CCC", "DDD", "2022-01-01T15:00:00", "2022-01-01T16:00:00"),
-        ]
-        assert list(self.find_combinations(flights, "AAA", "DDD")[0]) == flights
-
-    def test_search_returns_nothing_if_route_doesnt_exist(self):
-        flights = [
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
-            gen_flight("CCC", "DDD", "2022-01-01T13:00:00", "2022-01-01T14:00:00"),
-        ]
-        assert not self.find_combinations(flights, "AAA", "DDD")
-
-    def test_search_returns_nothing_if_layover_is_invalid(self):
-        flights = [
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
-            gen_flight("BBB", "CCC", "2022-01-01T13:00:00", "2022-01-01T14:00:00"),
-        ]
-        assert not self.find_combinations(
-            flights, "AAA", "CCC", SearchConstraints(min_layover=2)
+        combinations = list(
+            find_combinations(build_flight_index(flights), default_constraints)
         )
-
-
-class TestSearchConstraints:
-    # Test corner cases of the contraints mostly for doc purposes
-    def test_connection_is_valid_if_layover_is_within_range(self) -> None:
-        assert SearchConstraints(min_layover=2, max_layover=4).is_valid_layover(
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
-            gen_flight("BBB", "CCC", "2022-01-01T15:00:00", "2022-01-01T18:00:00"),
-        )
-
-    def test_connection_is_invalid_if_layover_is_below_minimum(self) -> None:
-        assert not SearchConstraints(min_layover=2).is_valid_layover(
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
-            gen_flight("BBB", "CCC", "2022-01-01T13:00:00", "2022-01-01T14:00:00"),
-        )
-
-    def test_connection_is_invalid_if_layover_is_above_minimum(self) -> None:
-        assert not SearchConstraints(max_layover=2).is_valid_layover(
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
-            gen_flight("BBB", "CCC", "2022-01-01T15:00:00", "2022-01-01T16:00:00"),
-        )
-
-    def test_connection_is_valid_if_layover_is_exactly_minimum(self) -> None:
-        assert SearchConstraints(min_layover=2).is_valid_layover(
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
-            gen_flight("BBB", "CCC", "2022-01-01T14:00:00", "2022-01-01T16:00:00"),
-        )
-
-    def test_connection_is_valid_if_layover_is_exactly_maximum(self) -> None:
-        assert SearchConstraints(max_layover=2).is_valid_layover(
-            gen_flight("AAA", "BBB", "2022-01-01T10:00:00", "2022-01-01T12:00:00"),
-            gen_flight("BBB", "CCC", "2022-01-01T14:00:00", "2022-01-01T14:00:00"),
-        )
+        assert len(combinations) == 1
+        assert combinations[0].first == flights[0]
+        assert combinations[0].last == flights[1]
