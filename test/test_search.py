@@ -1,21 +1,19 @@
 import datetime as dt
-from distutils.command.build import build
 
+from flight_search.constraints import SearchConstraints
 from flight_search.entities import FlightCombination, FlightDetails
 from flight_search.main import record_to_flight
 from flight_search.search import (
-    FlightIndex,
-    build_flight_index,
     SearchConstraints,
     branch_combination,
+    build_flight_index,
     find_combinations,
 )
-from flight_search.constraints import SearchConstraints
 
 
 def make_flight(
     origin: str, dest: str, departure: str, arrival: str, flight_no: str = "FAKE"
-):
+) -> FlightDetails:
     return record_to_flight(
         {
             "flight_no": flight_no,
@@ -30,9 +28,7 @@ def make_flight(
     )
 
 
-default_constraints = SearchConstraints(
-    "AAA", "BBB", 0, dt.timedelta(hours=1), dt.timedelta(hours=6)
-)
+default_constraints = SearchConstraints("AAA", "BBB")
 
 
 def test_flight_index_groups_flights_correctly() -> None:
