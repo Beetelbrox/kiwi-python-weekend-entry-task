@@ -1,4 +1,4 @@
 
 format:
-	isort src/ test/
-	black src/ test/
+	isort flight_search/ test/
+	black flight_search/ test/

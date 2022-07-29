@@ -125,6 +125,11 @@ class Trip:
         return (self.returning or self.departing).destination
 
     @property
+    def departure(self) -> dt.datetime:
+        """Departure time of the trip"""
+        return self.departing.first.departure
+
+    @property
     def travel_time(self) -> dt.timedelta:
         """
         Travel time of the trip. Includes layovers, does NOT include

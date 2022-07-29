@@ -1,5 +1,3 @@
-import datetime as dt
-
 from flight_search.constraints import SearchConstraints
 from flight_search.entities import FlightCombination, FlightDetails
 from flight_search.main import record_to_flight

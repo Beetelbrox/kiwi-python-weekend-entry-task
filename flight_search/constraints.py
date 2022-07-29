@@ -7,7 +7,7 @@ import datetime as dt
 from dataclasses import dataclass
 from decimal import Decimal
 
-from flight_search.entities import FlightCombination, FlightDetails, Trip, total_price
+from .entities import FlightCombination, FlightDetails, Trip, total_price
 
 
 @dataclass

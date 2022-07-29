@@ -8,9 +8,9 @@ from dataclasses import asdict
 from decimal import Decimal
 from typing import Any, Generator
 
-from flight_search.constraints import SearchConstraints, TripConstraints
-from flight_search.entities import FlightDetails, Trip, num_bags_allowed, total_price
-from flight_search.search import search_trips
+from .constraints import SearchConstraints, TripConstraints
+from .entities import FlightDetails, Trip, num_bags_allowed, total_price
+from .search import search_trips
 
 TS_FORMAT = "%Y-%m-%dT%H:%M:%S"
 DATE_FORMAT = "%Y-%m-%d"
@@ -104,7 +104,7 @@ def build_constraints(args: argparse.Namespace) -> TripConstraints:
     Given an args object, construct a trip constraints object to be used in the search
     """
 
-    if args.departure_date is not None and not args.roundtrip:
+    if args.return_date is not None and not args.roundtrip:
         raise MalformedInput("Specified return date on a one-way only trip.")
 
     dep = _build_constraints(args, args.origin, args.destination, args.departure_date)
@@ -131,10 +131,7 @@ class TripEncoder(json.JSONEncoder):
 
 def sorting_key_fn(trip: Trip) -> tuple[Decimal, Any]:
     """Function to be used when sorting the list of trips"""
-    return (
-        total_price(trip, trip.required_bags),
-        trip.departure,
-    )
+    return (total_price(trip, trip.required_bags), trip.departure)
 
 
 def main(args: argparse.Namespace) -> None:
@@ -184,9 +181,14 @@ if __name__ == "__main__":
         default=6,
         help="Maximum layover between flights in the same route, in hours.",
     )
-    parser.add_argument("--max-price", type=Decimal, help="Maximum trip price allowed.")
     parser.add_argument(
-        "--max-connections", type=int, help="Maximum amount of connections allowed."
+        "-p", "--max-price", type=Decimal, help="Maximum trip price allowed."
+    )
+    parser.add_argument(
+        "-c",
+        "--max-connections",
+        type=int,
+        help="Maximum amount of connections allowed.",
     )
     parser.add_argument("--departure-date", help="Desired departure date (YYYY-MM-DD).")
     parser.add_argument("--return-date", help="Desired return date (YYYY-MM-DD).")

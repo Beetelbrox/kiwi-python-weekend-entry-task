@@ -3,7 +3,7 @@
 from itertools import product
 from typing import Generator, Iterable
 
-from flight_search.constraints import (
+from .constraints import (
     SearchConstraints,
     TripConstraints,
     departs_on_requested_date,
@@ -12,12 +12,7 @@ from flight_search.constraints import (
     is_trip_elegible,
     is_valid_layover,
 )
-from flight_search.entities import (
-    FlightCombination,
-    FlightDetails,
-    NullFlightCombination,
-    Trip,
-)
+from .entities import FlightCombination, FlightDetails, NullFlightCombination, Trip
 
 FlightIndex = dict[str, list[FlightDetails]]
 
@@ -59,7 +54,7 @@ def find_combinations(
     """
     Given a flight index and a set of constraints, finds all combinations
     that satisfy the constraints.
-    This is achieved by finding all paths between the origin & destination airports
+    This is achieved by finding all simple paths between the origin & destination airports
     on the multigraph composed by the flights as edges and airports as nodes.
     The search itself is DFS + backtracking, where we traverse the DAG in a DFS fashion,
     prune branches that don't satisfy the constraints as early as possible to reduce
